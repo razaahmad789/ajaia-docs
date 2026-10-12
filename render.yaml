@@ -1,0 +1,67 @@
+# Render Blueprint: one Django API web service, one managed Postgres database,
+# and one static-site frontend. Deploy by pushing this repo to GitHub and
+# creating a new Blueprint in the Render dashboard (New + -> Blueprint).
+#
+# NOTE on cross-URLs: the two services reference each other's URL via
+# `fromService`. If Render cannot resolve them on the first apply, set the two
+# marked env vars manually after the first deploy (see README "Deploy").
+
+databases:
+  - name: ajaia-docs-db
+    plan: free
+    # Free Postgres expires ~30 days after creation — fine for review.
+
+services:
+  # ---------------- Backend API (Django + DRF) ----------------
+  - type: web
+    name: ajaia-docs-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    healthCheckPath: /api/health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ajaia-docs-db
+          property: connectionString
+      - key: SEED_PASSWORD
+        value: "password123"
+      # Allow the deployed frontend origin to call the API (CORS + CSRF).
+      # Enter the full https:// URL of the frontend after its first deploy,
+      # e.g. https://ajaia-docs-web.onrender.com  (no trailing slash).
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      # Optional: create a Django admin user for /admin/.
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: "admin"
+      - key: DJANGO_SUPERUSER_PASSWORD
+        generateValue: true
+
+  # ---------------- Frontend (Vite static site) ----------------
+  - type: web
+    name: ajaia-docs-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: ./dist
+    # SPA routing: serve index.html for client-side routes.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Full https:// URL of the backend API, entered after its first deploy,
+      # e.g. https://ajaia-docs-api.onrender.com  (no trailing slash).
+      # Vite inlines this at build time, so redeploy the frontend after setting.
+      - key: VITE_API_BASE_URL
+        sync: false
